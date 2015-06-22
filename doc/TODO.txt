@@ -1,0 +1,4 @@
+TODO:
+
+- deps.txt
+- setup.py
