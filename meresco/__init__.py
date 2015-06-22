@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 ## begin license ##
 #
 # Copyright (C) 2015 Seecr (Seek You Too B.V.) http://seecr.nl
@@ -19,17 +18,5 @@
 #
 ## end license ##
 
-from seecrdeps import includeParentAndDeps       #DO_NOT_DISTRIBUTE
-includeParentAndDeps(__file__)                   #DO_NOT_DISTRIBUTE
-
-from meresco.components import ParseArguments
-from meresco.elasticsearch import Config
-
-if __name__ == '__main__':
-    parser = ParseArguments()
-    for option in Config.options:
-        parser.addOption(option.shortOpt, option.longOpt, **option.kwargs)
-
-    options, arguments = parser.parse()
-
-    Config(**vars(options)).start()
+from pkgutil import extend_path
+__path__ = extend_path(__path__, __name__)
