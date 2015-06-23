@@ -43,7 +43,10 @@ class Config(object):
         configuration = JsonDict({
             "path": {
                 "data": ensureDir(self.stateDir, 'data'),
+                "logs": ensureDir(self.stateDir, 'logs'),
+                "work": ensureDir(self.stateDir, 'work'), # temporary files
                 "conf": self.configDir,
+                "plugins": ensureDir(self.stateDir, 'plugins'),
             },
             "cluster":{
                 "name": self.name,
@@ -57,12 +60,21 @@ class Config(object):
                 }
             }
         })
+        self._configureIndex(configuration)
         if self.identifier:
             configuration.setdefault("node", dict())['name'] = self.identifier
         with open(join(self.configDir, 'elasticsearch.json'), 'w') as f:
             configuration.dump(f, indent=4, sort_keys=True)
         LoggingConfig().writeConfig(configDir=self.configDir)
 
+    def _configureIndex(self, configuration):
+        index = configuration.setdefault('index', {})
+        if self.development:
+            index['number_of_shards'] = 1
+            index['number_of_replicas'] = 0
+        else:
+            index['number_of_shards'] = self.shards
+            index['number_of_replicas'] = self.replicas
 
     def start(self):
         self._configure()
@@ -78,10 +90,13 @@ class Config(object):
             self.kwargs = kwargs
     options = [
         Option('', '--stateDir', help='State dir for data and config files for elasticsearch are written.', mandatory=True),
-        Option('-p', '--port', type='int', help='Portnumber for HTTP access', mandatory=True),
-        Option('-t', '--transportPort', type='int', help='Portnumber for internal transport', mandatory=True),
+        Option('-p', '--port', type='int', help='Portnumber for HTTP access', default=9200),
+        Option('-t', '--transportPort', type='int', help='Portnumber for internal transport', default=9300),
         Option('-n', '--name', help='Application name (unique for elasticsearch cluster)', mandatory=True),
         Option('', '--identifier', help='Identifier, if None an identifier will be generated for this node.'),
+        Option('', '--shards', type='int', help='Set the number of shards, defaults to ElasticSearch default of {default}.', default=5),
+        Option('', '--replicas', type='int', help='Set the number of replicas, defaults to ElasticSearch default of {default}.', default=1),
+        Option('', '--development', help='Will start as a development node with 1 shard and 0 replicas, overrides settings of shards or replicas.', default=False, action="store_true"),
         Option('', '--elasticsearchExecutable', default='/usr/share/elasticsearch/bin/elasticsearch', help='Elasticsearch executable', dest='executable'),
     ]
 
