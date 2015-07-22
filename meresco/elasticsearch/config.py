@@ -18,8 +18,9 @@
 #
 ## end license ##
 
-from os import makedirs, execv
+from os import makedirs, execv, chmod
 from os.path import join, abspath, isdir, dirname
+from meresco.components import ParseArguments
 from meresco.components.json import JsonDict
 from .loggingconfig import LoggingConfig
 
@@ -29,17 +30,48 @@ usrSharePath = join(dirname(mypath), 'usr-share')  #DO_NOT_DISTRIBUTE
 
 
 class Config(object):
-    def __init__(self, stateDir, **kwargs):
-        self.stateDir = ensureDir(stateDir)
-        self.configDir = ensureDir(stateDir, 'config')
+    def __init__(self, **kwargs):
         for (k, v) in kwargs.items():
             if not k.startswith('_'):
                 setattr(self, k, v)
 
+    def configure(self):
+        self.stateDir = ensureDir(self.stateDir)
+        self.configDir = ensureDir(self.stateDir, 'config')
+        self.configFile = join(self.configDir, 'elasticsearch.json')
+        self._configure()
+        LoggingConfig().writeConfig(configDir=self.configDir)
+        self._createBin()
+        if self.start or self.development:
+            self._start()
+        else:
+            print '''
+Elasticsearch configured in directory "{stateDir}"
+All configuration is in the file "{configurationFile}"
+
+To start:
+    $ {runfile}'''.format(
+            stateDir=self.stateDir,
+            configurationFile=self.configFile,
+            runfile=self.runfile
+        )
+
+    @classmethod
+    def parse(cls):
+        parser = ParseArguments()
+        parser._parser.set_description("""Configures elasticsearch to start from given stateDir""")
+        for option in cls.options:
+            parser.addOption(option.shortOpt, option.longOpt, **option.kwargs)
+        options, arguments = parser.parse()
+        return cls(**vars(options))
+
+    def _start(self):
+        execv(
+            self.runfile,
+            [self.runfile],
+        )
+
     def _configure(self):
-        self._configuration = [
-            '--config={0}/elasticsearch.json'.format(self.configDir),
-        ]
         configuration = JsonDict({
             "path": {
                 "data": ensureDir(self.stateDir, 'data'),
@@ -63,9 +95,8 @@ class Config(object):
         self._configureIndex(configuration)
         if self.identifier:
             configuration.setdefault("node", dict())['name'] = self.identifier
-        with open(join(self.configDir, 'elasticsearch.json'), 'w') as f:
+        with open(self.configFile, 'w') as f:
             configuration.dump(f, indent=4, sort_keys=True)
-        LoggingConfig().writeConfig(configDir=self.configDir)
 
     def _configureIndex(self, configuration):
         index = configuration.setdefault('index', {})
@@ -76,12 +107,16 @@ class Config(object):
             index['number_of_shards'] = self.shards
             index['number_of_replicas'] = self.replicas
 
-    def start(self):
-        self._configure()
-        execv(
-            self.executable,
-            [self.executable] + self._configuration,
-        )
+    def _createBin(self):
+        binDir = ensureDir(self.stateDir, 'bin')
+        self.runfile = join(binDir, 'run')
+        with open(self.runfile, 'w') as b:
+            b.write("""#!/bin/bash
+# Generated
+{0} --config={1}
+""".format(self.executable, self.configFile))
+        chmod(self.runfile, 0755)
+
 
     class Option(object):
         def __init__(self, shortOpt, longOpt, **kwargs):
@@ -96,7 +131,8 @@ class Config(object):
         Option('', '--identifier', help='Identifier, if None an identifier will be generated for this node.'),
         Option('', '--shards', type='int', help='Set the number of shards, defaults to ElasticSearch default of {default}.', default=5),
         Option('', '--replicas', type='int', help='Set the number of replicas, defaults to ElasticSearch default of {default}.', default=1),
-        Option('', '--development', help='Will start as a development node with 1 shard and 0 replicas, overrides settings of shards or replicas.', default=False, action="store_true"),
+        Option('', '--start', help='Also start elasticsearch', default=False, action='store_true'),
+        Option('', '--development', help='Will start as a development node with 1 shard and 0 replicas, overrides settings of shards or replicas and will start.', default=False, action="store_true"),
         Option('', '--elasticsearchExecutable', default='/usr/share/elasticsearch/bin/elasticsearch', help='Elasticsearch executable', dest='executable'),
     ]
 

@@ -2,3 +2,6 @@ TODO:
 
 - deps.txt
 - setup.py
+
+- add bin to statePath, to make local starting simple.
+- in bin in statepath add plugin executable
