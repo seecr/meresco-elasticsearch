@@ -110,12 +110,20 @@ To start:
     def _createBin(self):
         binDir = ensureDir(self.stateDir, 'bin')
         self.runfile = join(binDir, 'run')
+        self.pluginfile = join(binDir, 'plugin')
         with open(self.runfile, 'w') as b:
             b.write("""#!/bin/bash
 # Generated
 {0} --config={1}
 """.format(self.executable, self.configFile))
         chmod(self.runfile, 0755)
+        with open(self.pluginfile, 'w') as b:
+            b.write("""#!/bin/bash
+# Generated
+export CONF_DIR={0}
+{1} "$@"
+""".format(self.configDir, join(dirname(self.executable), 'plugin')))
+        chmod(self.pluginfile, 0755)
 
 
     class Option(object):
