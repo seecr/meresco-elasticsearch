@@ -18,11 +18,13 @@
 #
 ## end license ##
 
-from os import makedirs, execv, chmod
+from os import makedirs, execv, chmod, getuid, walk, chown
+from pwd import getpwnam
 from os.path import join, abspath, isdir, dirname
 from meresco.components import ParseArguments
 from meresco.components.json import JsonDict
 from .loggingconfig import LoggingConfig
+from itertools import chain
 
 mypath = dirname(abspath(__file__))
 usrSharePath = '/usr/share/meresco-elasticsearch'
@@ -31,6 +33,10 @@ usrSharePath = join(dirname(mypath), 'usr-share')  #DO_NOT_DISTRIBUTE
 
 class Config(object):
     def __init__(self, **kwargs):
+        # defaults
+        self.development = False
+        self.user = None
+        # self.service = False
         for (k, v) in kwargs.items():
             if not k.startswith('_'):
                 setattr(self, k, v)
@@ -42,10 +48,12 @@ class Config(object):
         self._configure()
         LoggingConfig().writeConfig(configDir=self.configDir)
         self._createBin()
-        if self.start or self.development:
+        self._ownUser()
+        self._service()
+        if self.development:
             self._start()
-        else:
-            print '''
+            return
+        print '''
 Elasticsearch configured in directory "{stateDir}"
 All configuration is in the file "{configurationFile}"
 
@@ -55,12 +63,21 @@ To start:
             configurationFile=self.configFile,
             runfile=self.runfile
         )
+        if self.user:
+            print '''
+To run as a service:
+    $ cd /etc/service; sudo ln -s {stateDir}/service elasticsearch-service'''.format(
+            stateDir=self.stateDir,
+        )
+
 
     @classmethod
     def parse(cls):
         parser = ParseArguments()
         parser._parser.set_description("""Configures elasticsearch to start from given stateDir""")
-        for option in cls.options:
+        keys = ['default']
+        keys.append('admin' if getuid() == 0 else 'user')
+        for option in (o for k in keys for o in cls.options[k]):
             parser.addOption(option.shortOpt, option.longOpt, **option.kwargs)
         options, arguments = parser.parse()
         return cls(**vars(options))
@@ -125,24 +142,57 @@ export CONF_DIR={0}
 """.format(self.configDir, join(dirname(self.executable), 'plugin')))
         chmod(self.pluginfile, 0755)
 
+    def _ownUser(self):
+        if not self.user:
+            return
+        userInfo = getpwnam(self.user)
+        for path, dirs, files in walk(self.stateDir):
+            for f in chain(dirs, files):
+                chown(join(path, f), userInfo.pw_uid, userInfo.pw_gid)
+
+    def _service(self):
+        if not self.user:
+            return
+        serviceDir = ensureDir(self.stateDir, 'service')
+        ensureDir(serviceDir, 'log', 'main')
+        runfile = join(serviceDir, 'run')
+        logrunfile = join(serviceDir, 'log', 'run')
+        with open(logrunfile, 'w') as f:
+            f.write("""#!/bin/bash
+exec /usr/bin/setuidgid {0} /usr/bin/multilog t n20 s9999999 ./main 2>&1""".format(self.user))
+        chmod(logrunfile, 0755)
+        with open(runfile, 'w') as f:
+            f.write("""#!/bin/bash
+export LANG=en_US.UTF-8
+exec 2>&1
+cd {0}
+exec /usr/bin/setuidgid {1} ./run""".format(join(self.stateDir, 'bin'), self.user))
+        chmod(runfile, 0755)
 
     class Option(object):
         def __init__(self, shortOpt, longOpt, **kwargs):
             self.shortOpt = shortOpt
             self.longOpt = longOpt
             self.kwargs = kwargs
-    options = [
-        Option('', '--stateDir', help='State dir for data and config files for elasticsearch are written.', mandatory=True),
-        Option('-p', '--port', type='int', help='Portnumber for HTTP access', default=9200),
-        Option('-t', '--transportPort', type='int', help='Portnumber for internal transport', default=9300),
-        Option('-n', '--name', help='Application name (unique for elasticsearch cluster)', mandatory=True),
-        Option('', '--identifier', help='Identifier, if None an identifier will be generated for this node.'),
-        Option('', '--shards', type='int', help='Set the number of shards, defaults to ElasticSearch default of {default}.', default=5),
-        Option('', '--replicas', type='int', help='Set the number of replicas, defaults to ElasticSearch default of {default}.', default=1),
-        Option('', '--start', help='Also start elasticsearch', default=False, action='store_true'),
-        Option('', '--development', help='Will start as a development node with 1 shard and 0 replicas, overrides settings of shards or replicas and will start.', default=False, action="store_true"),
-        Option('', '--elasticsearchExecutable', default='/usr/share/elasticsearch/bin/elasticsearch', help='Elasticsearch executable', dest='executable'),
-    ]
+    options = {
+        'default': [
+            Option('', '--stateDir', help='State dir for data and config files for elasticsearch are written.', mandatory=True),
+            Option('-p', '--port', type='int', help='Portnumber for HTTP access', default=9200),
+            Option('-t', '--transportPort', type='int', help='Portnumber for internal transport', default=9300),
+            Option('-n', '--name', help='Application name (unique for elasticsearch cluster)', mandatory=True),
+            Option('', '--identifier', help='Identifier, if None an identifier will be generated for this node.'),
+            Option('', '--shards', type='int', help='Set the number of shards, defaults to ElasticSearch default of {default}.', default=5),
+            Option('', '--replicas', type='int', help='Set the number of replicas, defaults to ElasticSearch default of {default}.', default=1),
+            Option('', '--elasticsearchExecutable', default='/usr/share/elasticsearch/bin/elasticsearch', help='Elasticsearch executable', dest='executable'),
+        ],
+        "user": [
+            Option('', '--development', help='Will start as a development node with 1 shard and 0 replicas, overrides settings of shards or replicas and will start.', default=False, action="store_true"),
+        ],
+        "admin": [
+            Option('', '--user', help='User to be running the elasticseach-service', mandatory=True),
+            # Option('', '--service', help='Prepare daemontools service', default=False, action='store_true')
+        ]
+    }
 
 def ensureDir(*parts):
     p = abspath(join(*parts))
